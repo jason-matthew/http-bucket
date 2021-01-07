@@ -17,8 +17,9 @@ container=bucket
 exposed_port=80
 
 # application config
-export FLASK_ENV=development        # load codechanges without restarting server
-export ARCHIVE_DIR=/tmp/bucket      # disk storage
+export FLASK_ENV=development        # load code changes without restarting server
+export LOCAL_STORAGE=/tmp/bucket    # host path
+export ARCHIVE_DIR=/tmp/bucket      # container path; consumed by bucket.py
 
 # build image
 docker build --rm -t "${image}" .
@@ -26,7 +27,12 @@ docker build --rm -t "${image}" .
 # start in foreground
 # create volume for local python source code
 # create volume for upload/archive directory
-docker run --rm -e FLASK_ENV -e ARCHIVE_DIR -p ${exposed_port}:5000 --volume $(pwd)/assets/src/:/app --volume ${ARCHIVE_DIR}:${ARCHIVE_DIR} --name ${container} ${image}
+docker run --rm \
+    -e FLASK_ENV -e ARCHIVE_DIR \
+    -p ${exposed_port}:5000 \
+    --volume $(pwd)/assets/src/:/app \
+    --volume ${LOCAL_STORAGE}:${ARCHIVE_DIR} \
+    --name ${container} ${image}
 ```
 
 Host
@@ -52,23 +58,13 @@ python3 ./assets/src/bucket.py
 ```bash
 server=example.org
 
+# POST using multipart/form-data
 # upload individual file
 curl -X POST -F 'file=@results.xml' ${server}/upload
 
 # upload directory structure
 curl -X POST -F 'file=@results.zip' ${server}/upload
 curl -X POST -F 'file=@results.tgz' ${server}/upload
-```
-
-### Upload 
-
-```bash
-server=example.org
-artifact=results.xml
-archive=
-
-# POST data using multipart/form-data
-curl 
 ```
 
 ### Query
