@@ -1,0 +1,5 @@
+flask
+
+# mime/type inspection
+# https://github.com/ahupp/python-magic
+python-magic
