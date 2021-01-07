@@ -15,23 +15,23 @@ Container
 image=http-bucket
 container=bucket
 exposed_port=80
+local_storage=/tmp/bucket           # host path
 
 # application config
-export FLASK_ENV=development        # load code changes without restarting server
-export LOCAL_STORAGE=/tmp/bucket    # host path
 export ARCHIVE_DIR=/tmp/bucket      # container path; consumed by bucket.py
+export FLASK_ENV=development        # load code changes without restarting server
 
 # build image
 docker build --rm -t "${image}" .
 
 # start in foreground
-# create volume for local python source code
 # create volume for upload/archive directory
+# create volume for local python source code
 docker run --rm \
     -e FLASK_ENV -e ARCHIVE_DIR \
     -p ${exposed_port}:5000 \
+    --volume ${local_storage}:${ARCHIVE_DIR} \
     --volume $(pwd)/assets/src/:/app \
-    --volume ${LOCAL_STORAGE}:${ARCHIVE_DIR} \
     --name ${container} ${image}
 ```
 
