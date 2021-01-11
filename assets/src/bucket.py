@@ -1,182 +1,318 @@
 """
-Simple Flask application
-Provide HTTP service which supports file upload, rentention, and organization
+Provide utilities for storing file system content
 
-Endpoints provide
-    /upload : allow clients to POST files, including archives (ie zip)
-    /query  : allow clients to check if content previously uploaded
+Additional reading:
+https://github.com/torvalds/linux/commit/800179c9b8a1e796e441674776d11cd4c05d61d7
+https://unix.stackexchange.com/a/260191
+https://unix.stackexchange.com/a/377719
+http://man7.org/linux/man-pages/man5/proc.5.html (search, protected_hardlinks)
+
+Design references:
+https://quickshiftin.com/blog/2014/06/organize-directory-structure-large-dataset
 """
+
 # core modules
-import logging
-import os 
+import hashlib
+import os
 import re
-import shutil       # check available disk 
-import tempfile
+import uuid
 
 # installed modules
-from flask import Flask, flash, request, redirect, url_for, send_from_directory, abort
+import magic
 from werkzeug.utils import secure_filename
 
 # local modules
+import calc
+import config
+import decompress
 import util
 
-# external config
-MAX_CONTENT_LENGTH = os.environ.get("MAX_CONTENT_LENGTH", "32mb").lower()
-ARCHIVE_DIR = os.environ.get("ARCHIVE_DIR", "/tmp/bucket/archive")
-TEMP_DIR = os.environ.get("ARCHIVE_TEMP_DIR", None)
-
-# CONSTANTS
-DISK_SPACE_REQUIRED = 2**30         # 1 gb
-DISK_INODE_REQUIRED = 10**6         # 1 million
+# constants
 
 # globals
 logger = util.init_logger(__name__)
-app = Flask(__name__)
-app.secret_key = "It's ok if clients modify my cookies"
 
-def verify_config():
+
+class Blobstore(object):
     """
-    Consume external config
-    Raise exception for invalid values
+    Dictate structure and location to retain artifacts
+    External operations are expected to establish blobs via hardlinks
     """
-    error_msg = (
-        "Invalid input provided.  "
-        "Unwilling to start HTTP server"
-    )
-    inputs = {}
-    max_content_regex = re.compile("^(\d+)(gb|mb|kb)?$")
-    if max_content_regex.search(MAX_CONTENT_LENGTH):
-        count, unit = max_content_regex.findall(MAX_CONTENT_LENGTH)[0]
-        count = int(count)
-        if unit == "gb":
-            count = count * 2**30
-        elif unit == "mb":
-            count = count * 2**20
-        elif unit == "kb":
-            count = count * 2**10
-        inputs['MAX_CONTENT_LENGTH'] = count
-    else:
-        raise EnvironmentError(
-            "Invalid MAX_CONTENT_LENGTH format: '%s'."
-            "<# bytes> or <#><unit> required (ie, 10mb).  %s"
-            % (MAX_CONTENT_LENGTH, error_msg)
+    WORKING_DIR = config.CONSTANT.BUCKET.BLOB_DIR
+    CHECKSUM_TYPE = config.CHECKSUM_TYPE
+    CHECKSUM_REGEX = re.compile(r"^[0-9a-f]{8,}", re.IGNORECASE)       # min 8 characters required
+
+    @classmethod
+    def get_route(cls, checksum):
+        """
+        Identify pieces of checksum
+        Generate list of subdir paths which lead to the storage destination
+        Final item in list should only exist if unit is stored
+        Args:
+            checksum (str): checksum value
+        Refs:
+            Interesting discussion surrounding hashing and directory layout
+            https://quickshiftin.com/blog/2014/06/organize-directory-structure-large-dataset/
+        Returns:
+            list of strings (subdir paths)
+        Raises:
+            TypeError: invalid argument
+            ValueError: checksum does not conform to expectations
+        """
+        # type/value checking
+        error_msg = "Failed to determine checksum route"
+        checks = [
+            isinstance(checksum, str),
+            cls.CHECKSUM_REGEX.search(checksum),
+        ]
+        if not all(checks):
+            raise TypeError(
+                "Invalid checksum provided: (%s, %s).  "
+                "Checksum does not match '%s'.  %s"
+                % (type(checksum), checksum, cls.CHECKSUM_REGEX.pattern, error_msg)
+            )
+
+        # normalize value and establish subdir structure
+        checksum = checksum.lower()
+        return [
+            # Deconstruct into: 2char, 2char, full checksum
+            checksum[:2],
+            checksum[2:4],
+            checksum
+        ]
+
+    @classmethod
+    def get_destination(cls, checksum):
+        """
+        Given a checksum, identify the final destination
+        Create intermediary directories
+        Returns:
+            str: absolute path to storage location
+        Raises:
+            TypeError: invalid argument
+            ValueError: checksum does not conform to expectations
+        """
+        route = cls.get_route(checksum)
+        return os.path.join(cls.WORKING_DIR, *route)
+
+    @classmethod
+    def ensure_writeable(cls, checksum):
+        """
+        Create directories leading to specific checksum
+        """
+        fpath = cls.get_destination(checksum)
+        dpath = os.path.dirname(fpath)
+        os.makedirs(dpath, mode=0o777, exist_ok=True)
+
+    @classmethod
+    def check_exists(cls, checksum):
+        """
+        Check if checksum already retained on disk
+        Returns:
+            bool: blob already stored
+        """
+        dst = cls.get_destination(checksum)
+        return os.path.exists(dst)
+
+
+class Dirstore(object):
+    """
+    Dictate structure and location to retain artifacts
+    """
+    pass
+
+
+class _Stage(object):
+    """
+    Base class for temp file operations 
+    """
+    STAGING_DIR = config.CONSTANT.BUCKET.STAGING_DIR
+
+    def __init__(self):
+        """ 
+        Create new staging directory
+        Raises:
+            FileExistsError: uuid directory collison; path already exists
+        """
+        uid = uuid.uuid4().hex[:8]
+        dpath = os.path.join(self.STAGING_DIR, uid)
+        logger.info(
+            "Creating staging directory: '%s'" 
+            % dpath
         )
-    
-    if os.path.isdir(ARCHIVE_DIR):
-        pass
-    elif os.path.exists(ARCHIVE_DIR):
-        raise EnvironmentError(
-            "Invalid ARCHIVE_DIR: '%s'.  "
-            "Location exists but is not a directory.  %s"
-            % (ARCHIVE_DIR, error_msg)
+        os.makedirs(dpath, mode=0o777)
+        
+        # initialize all base instance variables
+        self.uid = uid          # (str) 8char unique identifier
+        self.dpath = dpath      # (str) directory path
+        self.error = None       # (str) exception msg
+        self.exception = None   # (obj) Python Exception
+
+    def process(self):
+        """ 
+        Called once after file is saved to disk
+        Inspect uploaded content
+        Establish hardlinks within blobstore
+        If all successful, cleanup directory
+        """
+        error_msg = (
+            "Failed to process content: '%s'" 
+            % self.dpath
         )
-    else:
-        # attempt to create location
         try:
-            logger.info(
-                "Creating ARCHIVE_DIR: '%s'"
-                % ARCHIVE_DIR
+            self._inspect()
+            self._store()
+            self._cleanup()
+        except (OSError, TypeError, Exception) as e:
+            msg = (
+                "%s: %s.  %s"
+                % (type(e).__name__, e, error_msg)
             )
-            os.makedirs(ARCHIVE_DIR, exist_ok=True)
-            app.config['UPLOAD_FOLDER'] = ARCHIVE_DIR
-        except Exception as e:
-            raise EnvironmentError(
-                "Failed to create ARCHIVE_DIR: '%s'.  %s.  %s"
-                % (ARCHIVE_DIR, e, error_msg)
-            )
-    inputs['UPLOAD_FOLDER'] = ARCHIVE_DIR
+            logger.error(msg)
+            self.error = msg
+            self.exception = e
+
+    def _inspect(self):
+        """
+        Interogate file system content
+        """
+        raise NotImplementedError("Subclass did not implement this method")
+
+    def _store(self):
+        """
+        Retain content outside of staging directory
+        """
+        raise NotImplementedError("Subclass did not implement this method")
     
-    # check disk
-    avail_bytes, avail_inodes = util.check_disk(ARCHIVE_DIR)
+    def _cleanup(self):
+        """
+        Remove staging directory from disk
+        """
+        raise NotImplementedError("Subclass did not implement this method")
+    
 
-    if avail_bytes < DISK_SPACE_REQUIRED:
-        available_gb = round(avail_bytes / 2**30, 2)
-        required_gb = round(DISK_SPACE_REQUIRED / 2**30, 2)
-        raise EnvironmentError(
-            "ARCHIVE_DIR does not have sufficient space.  "
-            "%s GB required, but only %s GB available.  %s"
-            % (required_gb, available_gb, error_msg)
+class Blob(_Stage):
+    """
+    Transfer uploaded file content to disk 
+
+    General sequence:
+    - (local) Establish uuid location and file path
+    - (external) Write file
+    - (local) Determine file checksum and mimetype
+    - (local) Retain content in blobstore
+    - (local) Cleanup staging directory
+    """
+    DEFAULT_FILENAME = config.CONSTANT.BUCKET.DEFAULT_FILENAME
+    CHECKSUM_TYPE = config.CHECKSUM_TYPE
+    
+    def __init__(self, filename=DEFAULT_FILENAME):
+        """ 
+        Determine initial location to retain upload
+        Subsequent operations will process file
+        Args:
+            filename (str): uploaded filename (not provided for PUT requests)
+        Raises:
+            FileExistsError: uuid directory collison; path already exists
+        """
+        # establish destination location
+        super().__init__()
+        fpath = os.path.join(self.dpath, secure_filename(filename))
+
+        # initialize all instance variables
+        self.fpath = fpath      # (str) file path
+        self.bpath = None       # (str) blob path
+        self.mime = None        # (str) mime type 
+        self.checksum = None    # (str) file fingerprint
+
+    def get_file_path(self):
+        """ Simple accessor """
+        return self.bpath or self.fpath
+        
+    def _inspect(self):
+        """
+        Calculate checksum
+        Determine mime type
+        Raises:
+            EnvironmentError: path does not exist
+            TypeError: path not string
+            TypeError: block size not int
+            ValueError: invalid argument value
+            ValueError: unsupported hash type
+        """
+        # validation that external processor has provided file implicitly occurs
+        self.checksum = calc.file_checksum(self.fpath, self.CHECKSUM_TYPE)
+        self.mime = magic.from_file(self.fpath, mime=True)
+        logger.info(
+            "File inspected '%s': (%s, %s)"
+            % (self.fpath, self.mime, self.checksum)
         )
-    if avail_inodes < DISK_INODE_REQUIRED:
-        raise EnvironmentError(
-            "ARCHIVE_DIR does not have sufficient inodes.  "
-            "%s required, but only %s available.  %s"
-            % (DISK_INODE_REQUIRED, avail_inodes, error_msg)
+
+    def _store(self):
+        """ 
+        Ensure blobstore retains staged content
+        """
+        self.bpath = Blobstore.get_destination(self.checksum)
+        if Blobstore.check_exists(self.checksum):
+            hardlinks = os.stat(self.bpath).st_nlink
+            logger.info(
+                "File already stored in %s location(s)" 
+                % hardlinks
+            )
+        else:
+            Blobstore.ensure_writeable(self.checksum)
+            os.link(self.fpath, self.bpath)
+            logger.info(
+                "Blob created: %s" 
+                % self.checksum 
+            )
+        logger.info(
+            "File retention confirmed: (%s, %s)"
+            % (self.fpath, self.bpath)
         )
 
-    logger.info(
-        "Inputs accepted.  Applying config: %s"
-        % inputs
-    )
-    app.config.update(inputs)
-
-@app.route('/', methods=['GET'])
-def context_root():
-    return "http-bucket server"
-
-@app.route('/upload', methods=['GET', 'POST'])
-def upload_file():
-    if request.method == 'POST':
-        # check if the post request has the file part
-        if 'file' not in request.files:
-            abort(400, 'File not provided via multi-part form')
-        file = request.files['file']
-        # if user does not select file, browser also
-        # submit an empty part without filename
-        if file.filename == '':
-            abort(400, 'No selected file')
-            return redirect(request.url)
-        if file:
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-            # TODO: conditionally redirect if browser was used to POST file
-            return redirect(url_for('uploaded_file', filename=filename))
-    return '''
-    <!doctype html>
-    <title>Upload new File</title>
-    <h1>Upload new File</h1>
-    <form method=post enctype=multipart/form-data>
-      <input type=file name=file>
-      <input type=submit value=Upload>
-    </form>
-    '''
-
-@app.route('/upload/v2', methods=['POST'])
-def upload_file_v2():
-    # check if the post request has the file part
-    if 'file' not in request.files:
-        flash('No file part')
-        return redirect(request.url)
-    file = request.files['file']
-    logger.info(
-        "File: (%s, %s)" 
-        % (type(file), file)
-    )
-    logger.info(file.__dict__)
-    logger.info(
-        "Request: (%s, %s)"
-        % (type(request), request)
-    )
-    logger.info(request.__dict__.keys())
-    # if user does not select file, browser also
-    # submit an empty part without filename
-    if file.filename == '':
-        flash('No selected file')
-        return redirect(request.url)
-    if file:
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        return {"status": "success", "file": filename}
+    def _cleanup(self):
+        """
+        Remove staging directory from disk
+        Raises:
+            OSError: staging directory populated with additional content
+        """
+        # cleanup expects single file to exist
+        # step will fail if staging directory contains custom content 
+        logger.info(
+            "Removing staging directory: '%s'" 
+            % self.dpath
+        )
+        os.remove(self.fpath)       # single known file
+        os.rmdir(self.dpath)        # remove empty directory
 
 
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+class Archive(_Stage):
+    """
+    Unpackage directory archives (ie. tgz, zip)
+    """
+    EXPLODE_DIR = config.CONSTANT.BUCKET.EXPLODE_DIR
+    SUPPORTED_MIMETYPES = {
+        # python-magic mimetype :   call   
+        "application/x-tar"     :   decompress.tar,
+        "application/x-xz"      :   decompress.tar,
+        "application/x-gzip"    :   decompress.tar,
+        "application/x-bzip2"   :   decompress.tar,
+        "application/zip"       :   decompress.zip,
+    }
 
-if __name__ == '__main__':
-    verify_config()
-    logger.info(
-        "Starting Flask App with config: %s"
-        % app.config
-    )
-    app.run(host='0.0.0.0')
+    def __init__(self, fpath):
+        """ 
+        Create new explode directory
+        Args:
+            fpath (str): absolute file path
+        Raises:
+            FileExistsError: uuid directory collison; path already exists
+        """
+        # establish staging and destination directories
+        super().__init__()
+        apath = os.path.join(self.EXPLODE_DIR, self.uid)
+
+        # initialize all instance variables
+        self.apath = apath      # archive path
+    
+

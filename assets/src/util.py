@@ -1,6 +1,15 @@
+"""
+Provide generic utilities 
+Module typically sourced by all peers 
+Importing local modules likely creates a circular dependency
+"""
+
 # core modules 
 import logging
 import os
+
+# avoid local module import
+
 
 def init_logger(name, level=logging.INFO):
     """
@@ -44,11 +53,3 @@ def check_disk(path):
     free_inodes = statvfs.f_favail                        
     return free_bytes, free_inodes
 
-
-class File(object):
-    """
-    Base class for processing file upload
-    """
-
-    def __init__(file, headers):
-        pass

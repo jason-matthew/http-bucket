@@ -1,6 +1,6 @@
 # Overview
 
-Provide HTTP server to upload, retain, and organize files.
+Provide HTTP server to retain and organize files.
 
 Project originally created to provide file storage to ephemeral processes (ie containers).
 
@@ -46,14 +46,35 @@ virtualenv -p python3 ~/venv/bucket
 pip install --user -r ./assets/requirements.txt
 
 # debug properties
+export ARCHIVE_DIR=/tmp/bucket      # disk storage; consumed by bucket.py
 export FLASK_ENV=development        # load codechanges without restarting server
-export ARCHIVE_DIR=/tmp/bucket      # disk storage
 
 # start flask application
 python3 ./assets/src/bucket.py
 ```
 
 ### Upload
+
+Examples provided here present simplified upload instructions.  Application can be configured to organize file system content by specifying tags during service deployment and providing matching headers during file upload.  Additional instructions are captured within [Config](#Config) section.
+
+#### GET, POST, PUT
+
+`/upload` supports:
+* `GET`: HTML form which prompts user for upload
+* `POST`: Send file and filename via `multipart/form-data`
+* `PUT`: Send file directly
+
+Additional data can be conveyed to `PUT` and `POST` operations.  Attributes dictate how content is retained (and replicated) server side.  This config is covered within [Config](#Config) section.
+
+```bash
+server=example.org
+
+# POST used to support multipart/form-data; operation is recommended
+curl -X POST -F 'file=@results.xml' ${server}/upload
+
+# PUT grants clients another option
+curl -X PUT --data 
+```
 
 ```bash
 server=example.org
@@ -74,10 +95,14 @@ server=example.org
 artifact=results.xml
 
 # check if content previously uploaded
-curl -X HEAD ${server}/checksum/$(md5sum ${artifact} | awk '{print $1}')
-curl -X HEAD ${server}/checksum/$(shasum -a 256 ${artifact} | awk '{print $1}')
-curl -X HEAD ${server}/checksum/$(shasum -a 512 ${artifact} | awk '{print $1}')
+curl --head ${server}/checksum/$(md5sum ${artifact} | awk '{print $1}')
+curl --head ${server}/checksum/$(shasum -a 256 ${artifact} | awk '{print $1}')
+curl --head ${server}/checksum/$(shasum -a 512 ${artifact} | awk '{print $1}')
 ```
+
+## Config
+
+
 
 ## References
 
@@ -86,7 +111,9 @@ Flask
 * [Quickstart](https://flask.palletsprojects.com/en/1.1.x/quickstart/#quickstart)
 * [Development Server](https://flask.palletsprojects.com/en/1.1.x/server/#server)
 * [Upload files](https://flask.palletsprojects.com/en/1.1.x/patterns/fileuploads/)
+* [API](https://flask.palletsprojects.com/en/1.1.x/api/)
 * [werkzeug FileStorage](https://werkzeug.palletsprojects.com/en/1.0.x/datastructures/#werkzeug.datastructures.FileStorage)
+* [ReadTheDocs](https://tedboy.github.io/flask/index.html)
 
 Mime Types
 

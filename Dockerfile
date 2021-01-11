@@ -1,15 +1,24 @@
 FROM python:3
-LABEL   name="bucket-archive" \
+
+# aid development
+RUN apt-get update && \
+    apt-get -y install vim && \ 
+    rm -rf /var/lib/apt/lists/*
+
+# describe image
+LABEL   name="http-bucket" \
         description="Upload and retreive files" \
-        vcs-url="https://github.com/jason-matthew/bucket" \
+        vcs-url="https://github.com/jason-matthew/http-bucket" \
         maintainer="Jon.Gates" \
         header="QksgTG91bmdl"
 
-# app setup
+# app reqs
 WORKDIR /app
 COPY ./assets/requirements.txt ./
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r /app/requirements.txt
 
+# app setup
 COPY ./assets/src/* /app/
-ENTRYPOINT [ "python", "/app/bucket.py" ]
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+ENTRYPOINT [ "python", "/app/api.py" ]
