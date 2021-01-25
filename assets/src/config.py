@@ -1,4 +1,4 @@
-""" 
+"""
 Retain application configuration
 Manage environment variable consumption and defaults
 """
@@ -7,10 +7,10 @@ import hashlib
 import os
 import re
 
-# local modules 
+# local modules
 import util
 
-# external config                   
+# external config
 # global                              env var                  default
 MAX_CONTENT_LENGTH  = os.environ.get("MAX_CONTENT_LENGTH"   , "32mb").lower()
 ARCHIVE_DIR         = os.environ.get("ARCHIVE_DIR"          , "/tmp/bucket/archive")
@@ -18,11 +18,12 @@ CHECKSUM_TYPE       = os.environ.get("CHECKSUM_TYPE"        , "md5").lower()
 
 # globals
 logger = util.init_logger(__name__)
+inputs = None
 
 # alternative structure; currently not used
 class CONSTANT:
-    """ 
-    Retain variables within a namespace 
+    """
+    Retain variables within a namespace
     Accessible using dot.notation
     """
     class DISK:
@@ -37,13 +38,18 @@ class CONSTANT:
         BLOB_DIR = os.path.join(ARCHIVE_DIR, "blob")
         DEFAULT_FILENAME = "blob"   # staging filename if not provided
 
-def source_config():
+
+def source_external_config():
     """
     Consume external config
     Raise exception for invalid values
     Returns:
         dict: flask app config additions
     """
+    global inputs
+    if inputs is not None:
+        return inputs
+
     error_msg = (
         "Invalid input provided.  "
         "Failed to source application config"
@@ -66,7 +72,7 @@ def source_config():
             "<# bytes> or <#><unit> required (ie, 10mb).  %s"
             % (MAX_CONTENT_LENGTH, error_msg)
         )
-    
+
     if os.path.isdir(ARCHIVE_DIR):
         pass
     elif os.path.exists(ARCHIVE_DIR):
@@ -89,7 +95,7 @@ def source_config():
                 % (ARCHIVE_DIR, e, error_msg)
             )
     inputs["UPLOAD_FOLDER"] = ARCHIVE_DIR
-    
+
     # check disk
     avail_bytes, avail_inodes = util.check_disk(ARCHIVE_DIR)
 
@@ -114,10 +120,11 @@ def source_config():
             "Supported algorithms: %s.  %s"
             % (CHECKSUM_TYPE, hashlib.algorithms_available, error_msg)
         )
-    
+    else:
+        inputs["CHECKSUM_TYPE"] = CHECKSUM_TYPE
+
     logger.info(
         "Inputs accepted: %s"
         % inputs
     )
     return inputs
-
