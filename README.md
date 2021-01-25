@@ -1,8 +1,15 @@
 # Overview
 
-Provide HTTP server to retain and organize files.
+Provide HTTP server to retain and organize files.  
 
-Project originally created to provide file storage to ephemeral processes (ie containers).
+Project originally created to provide file storage to ephemeral processes (ie containers). 
+
+## Preface
+
+Document provides a quickstart for application deployment and usage.  Project documentation and commentary is retained within additional READMEs.  To name a few:
+
+* [Goals and design](./assets/doc/README.md)
+* [Python modules](./assets/src/README.md)
 
 ## Usage
 
@@ -45,12 +52,12 @@ virtualenv -p python3 ~/venv/bucket
 # satisfy dependencies
 pip install --user -r ./assets/requirements.txt
 
-# debug properties
+# application config
 export ARCHIVE_DIR=/tmp/bucket      # disk storage; consumed by bucket.py
 export FLASK_ENV=development        # load codechanges without restarting server
 
 # start flask application
-python3 ./assets/src/bucket.py
+python3 ./assets/src/api.py
 ```
 
 ### Upload
@@ -92,17 +99,24 @@ curl -X POST -F 'file=@results.tgz' ${server}/upload
 
 ```bash
 server=example.org
-artifact=results.xml
+
+# retreive system config
+curl ${server}/config
 
 # check if content previously uploaded
+artifact=results.xml
 curl --head ${server}/checksum/$(md5sum ${artifact} | awk '{print $1}')
-curl --head ${server}/checksum/$(shasum -a 256 ${artifact} | awk '{print $1}')
-curl --head ${server}/checksum/$(shasum -a 512 ${artifact} | awk '{print $1}')
 ```
 
 ## Config
 
+Environment variables can control application behaviors
 
+Variable            | Default               | Description | Notes 
+--------------------|-----------------------|---------|-------
+`ARCHIVE_DIR`       | /tmp/bucket/archive   | Local storage path | When deploying via docker, path should be a mounted volume
+`CHECKSUM_TYPE`     | md5                   | Hashing algorithm used to calculate file checksum | Supported dictated by [hashlib](https://docs.python.org/3/library/hashlib.html)
+`MAX_CONTENT_LENGTH`| 32mb                  | Max file size supported by `/upload` endpoint | `<int><unit>` and `<bytes>` formatted supported
 
 ## References
 
