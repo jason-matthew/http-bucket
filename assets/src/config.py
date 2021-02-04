@@ -13,7 +13,7 @@ import util
 # external config
 # global                              env var                  default
 MAX_CONTENT_LENGTH  = os.environ.get("MAX_CONTENT_LENGTH"   , "32mb").lower()
-ARCHIVE_DIR         = os.environ.get("ARCHIVE_DIR"          , "/tmp/bucket/archive")
+ARCHIVE_DIR         = os.environ.get("ARCHIVE_DIR"          , "/tmp/bucket")
 CHECKSUM_TYPE       = os.environ.get("CHECKSUM_TYPE"        , "md5").lower()
 
 # globals

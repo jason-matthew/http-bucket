@@ -42,7 +42,7 @@ def external_config():
 
 
 @app.route('/upload/inspect', methods=['GET', 'POST'])
-def upload_file_v2():
+def upload_inspect():
     if request.method == 'POST':
         # check if the post request has the file part
         if 'file' not in request.files:
@@ -89,8 +89,8 @@ def upload_file_v2():
     '''
 
 
-@app.route('/upload/blob', methods=['POST'])
-def upload_file_v3():
+@app.route('/upload', methods=['GET', 'POST'])
+def upload():
     if request.method == 'POST':
         # ensure multipart form completed
         if 'file' not in request.files:
@@ -99,8 +99,8 @@ def upload_file_v3():
                 "code": 400,
                 "error": "File not provided via multi-part form",
             }, 400
-        upload = request.files['file']
-        if upload.filename == '':
+        file_upload = request.files['file']
+        if file_upload.filename == '':
             return {
                 "status": "bad request",
                 "code": 400,
@@ -108,10 +108,21 @@ def upload_file_v3():
             }, 400
 
         # process upload
-        manager = bucket.Upload(upload.filename)
-        upload.save(manager.get_upload_destination())
+        manager = bucket.Upload(file_upload.filename)
+        file_upload.save(manager.get_upload_destination())
         manager.process()
         return manager.get_api_response()
+    else:
+        # GET: provide HTML form
+        return '''
+        <!doctype html>
+        <title>Upload new File</title>
+        <h1>Upload new File</h1>
+        <form method=post enctype=multipart/form-data>
+        <input type=file name=file>
+        <input type=submit value=Upload>
+        </form>
+        '''
 
 
 if __name__ == '__main__':
@@ -121,4 +132,4 @@ if __name__ == '__main__':
         "Starting Flask App with config: %s"
         % app.config
     )
-    app.run(host='0.0.0.0')
+    app.run(host='0.0.0.0', port=80)

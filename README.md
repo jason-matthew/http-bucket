@@ -1,8 +1,8 @@
 # Overview
 
-Provide HTTP server to retain and organize files.  
+Provide HTTP server to retain and organize files.
 
-Project originally created to provide file storage to ephemeral processes (ie containers). 
+Project originally created to provide file storage to ephemeral processes (ie containers).
 
 ## Preface
 
@@ -36,7 +36,7 @@ docker build --rm -t "${image}" .
 # create volume for local python source code
 docker run --rm \
     -e FLASK_ENV -e ARCHIVE_DIR \
-    -p ${exposed_port}:5000 \
+    -p ${exposed_port}:80 \
     --volume ${local_storage}:${ARCHIVE_DIR} \
     --volume $(pwd)/assets/src/:/app \
     --name ${container} ${image}
@@ -64,24 +64,14 @@ python3 ./assets/src/api.py
 
 Examples provided here present simplified upload instructions.  Application can be configured to organize file system content by specifying tags during service deployment and providing matching headers during file upload.  Additional instructions are captured within [Config](#Config) section.
 
-#### GET, POST, PUT
+#### GET, POST
 
 `/upload` supports:
 * `GET`: HTML form which prompts user for upload
 * `POST`: Send file and filename via `multipart/form-data`
-* `PUT`: Send file directly
 
-Additional data can be conveyed to `PUT` and `POST` operations.  Attributes dictate how content is retained (and replicated) server side.  This config is covered within [Config](#Config) section.
+Additional data can be conveyed to `POST` operations via headers.  Attributes dictate how content is retained (and replicated) server side.  This config is covered within [Config](#Config) section.
 
-```bash
-server=example.org
-
-# POST used to support multipart/form-data; operation is recommended
-curl -X POST -F 'file=@results.xml' ${server}/upload
-
-# PUT grants clients another option
-curl -X PUT --data 
-```
 
 ```bash
 server=example.org
@@ -112,11 +102,15 @@ curl --head ${server}/checksum/$(md5sum ${artifact} | awk '{print $1}')
 
 Environment variables can control application behaviors
 
-Variable            | Default               | Description | Notes 
---------------------|-----------------------|---------|-------
+Variable            | Default               | Description   | Notes
+--------------------|-----------------------|---------------|-------
 `ARCHIVE_DIR`       | /tmp/bucket/archive   | Local storage path | When deploying via docker, path should be a mounted volume
 `CHECKSUM_TYPE`     | md5                   | Hashing algorithm used to calculate file checksum | Supported dictated by [hashlib](https://docs.python.org/3/library/hashlib.html)
 `MAX_CONTENT_LENGTH`| 32mb                  | Max file size supported by `/upload` endpoint | `<int><unit>` and `<bytes>` formatted supported
+
+## Future tasks
+
+* [Flask Configure Apache](https://flask.palletsprojects.com/en/1.1.x/deploying/mod_wsgi/#configuring-apache)
 
 ## References
 

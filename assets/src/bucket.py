@@ -630,7 +630,7 @@ class Upload(_Action):
 
     def __init__(self, filename=DEFAULT_FILENAME):
         """
-        Creating initial staging directory and File object
+        Create initial staging directory and File object
         """
         # initialize all instance variables
         self.file_obj = File(filename)      # (File obj)
@@ -644,7 +644,48 @@ class Upload(_Action):
         """
         return self.file_obj.file_path
 
-    def get_api_response(self, log=False, log_level="info"):
+    def process(self):
+        """
+        Process uploaded file and retain within blobstore
+        Leverage CompressedFile and Archive classes if file type is supported
+        """
+        obj = self.file_obj
+        if obj.archive_path:
+            raise RuntimeError(
+                "Upload has already been processed.  "
+                "Call made against completed object"
+            )
+
+        logger.info(
+            "Processing upload: '%s'"
+            % (obj.get_path())
+        )
+        result = obj.process()
+
+        if result and obj.mime in CompressedFile.SUPPORTED_MIMETYPES:
+            logger.info(
+                "Compressed file of type '%s' recognized: '%s'"
+                % (obj.mime, obj.get_path())
+            )
+            obj = self.compressed_obj = CompressedFile(obj.get_path())
+            result = obj.process()
+
+        if result and obj.mime in Archive.SUPPORTED_MIMETYPES:
+            logger.info(
+                "Directory archive of type '%s' recognized: '%s'"
+                % (obj.mime, obj.get_path())
+            )
+            obj = self.archive_obj = Archive(obj.get_path())
+            result = obj.process()
+
+        if result is False:
+            logger.warning(
+                "Upload processing unsuccessful.  See prior error"
+            )
+        self.result = result
+        return result
+
+    def get_api_response(self, log=True, log_level="info"):
         """
         Collect results from obj instances
         Args:
@@ -716,6 +757,7 @@ class Upload(_Action):
                 "error": errors,
             },
             "code": code,
+            "status": errors if errors else "Success",
         }
         if log_level in ["info", "warning", "error"]:
             del result["log"]["debug"]
@@ -727,44 +769,3 @@ class Upload(_Action):
             del result["log"]
 
         return result, code
-
-    def process(self):
-        """
-        Process uploaded file and retain within blobstore
-        Leverage CompressedFile and Archive classes if file type is supported
-        """
-        obj = self.file_obj
-        if obj.archive_path:
-            raise RuntimeError(
-                "Upload has already been processed.  "
-                "Call made against completed object"
-            )
-
-        logger.info(
-            "Processing upload: '%s'"
-            % (obj.get_path())
-        )
-        result = obj.process()
-
-        if result and obj.mime in CompressedFile.SUPPORTED_MIMETYPES:
-            logger.info(
-                "Compressed file of type '%s' recognized: '%s'"
-                % (obj.mime, obj.get_path())
-            )
-            obj = self.compressed_obj = CompressedFile(obj.get_path())
-            result = obj.process()
-
-        if result and obj.mime in Archive.SUPPORTED_MIMETYPES:
-            logger.info(
-                "Directory archive of type '%s' recognized: '%s'"
-                % (obj.mime, obj.get_path())
-            )
-            obj = self.archive_obj = Archive(obj.get_path())
-            result = obj.process()
-
-        if result is False:
-            logger.warning(
-                "Upload processing unsuccessful.  See prior error"
-            )
-        self.result = result
-        return result
