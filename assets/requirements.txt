@@ -1,4 +1,5 @@
 flask
+requests
 
 # mime/type inspection
 # https://github.com/ahupp/python-magic

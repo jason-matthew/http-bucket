@@ -107,8 +107,11 @@ def upload():
                 "error": "No file selected",
             }, 400
 
+        filename = secure_filename(file_upload.filename)
+        headers = dict(request.headers)
+
         # process upload
-        manager = bucket.Upload(file_upload.filename)
+        manager = bucket.Upload(filename, headers)
         file_upload.save(manager.get_upload_destination())
         manager.process()
         return manager.get_api_response()
@@ -125,11 +128,19 @@ def upload():
         '''
 
 
-if __name__ == '__main__':
+def prep():
+    """
+    Prepare to run Flask app
+    """
     inputs = config.source_external_config()
     app.config.update(inputs)
+    config.verify_disk()
+
+
+if __name__ == '__main__':
+    prep()
     logger.info(
         "Starting Flask App with config: %s"
         % app.config
     )
-    app.run(host='0.0.0.0', port=80)
+    app.run(host='0.0.0.0', port=5000)
